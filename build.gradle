@@ -1,0 +1,134 @@
+import com.vanniktech.maven.publish.SonatypeHost
+
+plugins {
+    id 'java'
+    id 'java-library'
+    id 'maven-publish'
+    id "com.gradleup.shadow" version "8.3.6"
+    id "com.vanniktech.maven.publish" version "0.31.0"
+}
+
+group = 'io.github.leralix'
+version = '0.7.0'
+
+
+mavenPublishing {
+    // publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL, true)
+    // signAllPublications()
+}
+
+// signing {
+//     useGpgCmd()
+//     sign(publishing.publications)
+// }
+
+compileJava.options.encoding = 'UTF-8'
+
+repositories {
+    mavenCentral()
+    maven {
+        name = "papermc"
+        url = "https://repo.papermc.io/repository/maven-public/"
+    }
+    maven {
+        name = "sonatype"
+        url = "https://oss.sonatype.org/content/groups/public/"
+    }
+    maven { url = "https://plugins.gradle.org/m2/" }
+    gradlePluginPortal()
+}
+
+dependencies {
+    // Use Paper 1.21.1 API for 1.21.11+ compatibility
+    // Library remains compatible with older servers as long as new APIs aren't used directly
+    compileOnly "io.papermc.paper:paper-api:1.21.1-R0.1-SNAPSHOT"
+
+    // Bukkit API on the test classpath: ConfigUtil references FileConfiguration/YamlConfiguration,
+    // which the verifier must load when linking the class under test.
+    testImplementation "io.papermc.paper:paper-api:1.21.1-R0.1-SNAPSHOT"
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.0'
+    testImplementation 'org.junit.jupiter:junit-jupiter-params:5.10.0'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.0'
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
+
+shadowJar {
+    relocate 'org.bstats', 'org.leralix.lib'
+    archiveClassifier.set('all')
+    archiveBaseName.set('CocoNationLib')
+}
+
+
+def targetJavaVersion = 21
+java {
+    def javaVersion = JavaVersion.toVersion(targetJavaVersion)
+    sourceCompatibility = javaVersion
+    targetCompatibility = javaVersion
+    // Configure Gradle Java toolchain to request Java 21 for compilation/execution
+    // This lets Gradle download/use a JDK 21 toolchain if available on the system or toolchain providers.
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(targetJavaVersion)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    // Use --release when supported to ensure consistent bytecode and API level
+    if (targetJavaVersion >= 10 || JavaVersion.current().isJava10Compatible()) {
+        options.release = targetJavaVersion
+    }
+}
+
+// Traitement des ressources
+processResources {
+    def props = [version: version]
+    inputs.properties props
+    filteringCharset = 'UTF-8'
+    filesMatching('plugin.yml') {
+        expand props
+    }
+}
+
+mavenPublishing {
+    coordinates("org.coco", "CocoNationLib", "0.1")
+
+    pom {
+        name = "CocoNationLib"
+        description = "Minecraft plugin library"
+        inceptionYear = "2025"
+        url = "https://github.com/Leralix/SphereLib"
+        licenses {
+            license {
+                name = "GNU General Public License v3.0"
+                url = "https://www.gnu.org/licenses/gpl-3.0.html"
+                distribution = "https://www.gnu.org/licenses/gpl-3.0.html"
+            }
+        }
+        developers {
+            developer {
+                id = '78090544'
+                name = 'Leralix'
+                email = 'leralix98@gmail.com'
+            }
+        }
+        scm {
+            connection = 'scm:git:git://github.com/Leralix/SphereLib.git'
+            developerConnection = 'scm:git:ssh://github.com/Leralix/SphereLib.git'
+            url = 'https://github.com/Leralix/SphereLib'
+        }
+    }
+}
+
+
+tasks.withType(Javadoc).configureEach {
+    options.encoding = 'UTF-8'
+    options.addStringOption('charset', 'UTF-8')
+    options.addStringOption('docencoding', 'UTF-8')
+}
+
+// tasks.withType(PublishToMavenRepository).configureEach {
+//  dependsOn tasks.withType(Sign)
+// }

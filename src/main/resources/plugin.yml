@@ -1,0 +1,5 @@
+name: CocoNationLib
+version: '${version}'
+main: org.leralix.lib.SphereLib
+api-version: '1.19'
+folia-supported: true
