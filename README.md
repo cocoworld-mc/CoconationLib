@@ -13,7 +13,7 @@ SphereLib est une bibliothèque Java fournissant des utilitaires, des classes de
 - **Utilitaires** : Chat cliquable, sons, têtes joueurs, particules, progression, NBT custom
 - **Configuration** : Gestion intelligente avec merge de configs et blacklist
 - **Internationalisation** : Système de traduction avec placeholders
-- **Compatibilité** : Support PaperMC 1.19+ et Folia
+- **Compatibilité** : PaperMC/Folia Minecraft 26.1.2 (Java 25)
 
 ## Ce que ne fait pas la bibliothèque
 
@@ -24,10 +24,10 @@ SphereLib est une bibliothèque Java fournissant des utilitaires, des classes de
 
 ## Stack technique
 
-- **Java** : 17+ (compilé avec Java 21)
-- **API** : PaperMC 1.19+
+- **Java** : 25
+- **API** : PaperMC 26.1.2 (`api-version` 26.1)
 - **Compatible Folia** : Oui
-- **Build** : Gradle 8.3+ avec shadow plugin
+- **Build** : Gradle 9.5+ avec shadow plugin
 - **Dépendances** : Paper API (compileOnly)
 
 ## Structure du dépôt
