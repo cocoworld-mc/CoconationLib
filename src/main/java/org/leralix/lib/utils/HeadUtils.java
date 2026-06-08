@@ -12,6 +12,7 @@ import org.bukkit.profile.PlayerProfile;
 import org.bukkit.profile.PlayerTextures;
 
 import java.net.MalformedURLException;
+import java.net.URI;
 import java.net.URL;
 import java.util.*;
 
@@ -141,7 +142,8 @@ public class HeadUtils {
 
     private static URL createURL(String url) {
         try {
-            return new URL(url);
+            // URL(String) is deprecated for removal since Java 20; build via URI under Java 25.
+            return URI.create(url).toURL();
         } catch (MalformedURLException e) {
             throw new RuntimeException(e);
         }
