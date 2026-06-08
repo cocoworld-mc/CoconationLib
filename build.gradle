@@ -1,11 +1,9 @@
-import com.vanniktech.maven.publish.SonatypeHost
-
 plugins {
     id 'java'
     id 'java-library'
     id 'maven-publish'
-    id "com.gradleup.shadow" version "8.3.6"
-    id "com.vanniktech.maven.publish" version "0.31.0"
+    id "com.gradleup.shadow" version "9.4.2"
+    id "com.vanniktech.maven.publish" version "0.36.0"
 }
 
 group = 'io.github.leralix'
@@ -39,16 +37,20 @@ repositories {
 }
 
 dependencies {
-    // Use Paper 1.21.1 API for 1.21.11+ compatibility
-    // Library remains compatible with older servers as long as new APIs aren't used directly
-    compileOnly "io.papermc.paper:paper-api:1.21.1-R0.1-SNAPSHOT"
+    // Paper API targeting Minecraft 26.1.2 / Java 25 (MC26 platform migration).
+    // New coordinate scheme (26.1.2.build.N-stable) replaces the legacy -R0.1-SNAPSHOT format.
+    compileOnly "io.papermc.paper:paper-api:26.1.2.build.69-stable"
 
     // Bukkit API on the test classpath: ConfigUtil references FileConfiguration/YamlConfiguration,
-    // which the verifier must load when linking the class under test.
-    testImplementation "io.papermc.paper:paper-api:1.21.1-R0.1-SNAPSHOT"
-    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.0'
-    testImplementation 'org.junit.jupiter:junit-jupiter-params:5.10.0'
-    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.0'
+    // which the verifier must load when linking the class under test. Aligned with the compile coordinate.
+    testImplementation "io.papermc.paper:paper-api:26.1.2.build.69-stable"
+    // JUnit aligned via the BOM: recent enough to read Java 25 class files (ASM) and to provide
+    // the JUnit Platform launcher that Gradle 9 no longer puts on the test runtime classpath implicitly.
+    testImplementation platform('org.junit:junit-bom:5.14.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter-api'
+    testImplementation 'org.junit.jupiter:junit-jupiter-params'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 tasks.withType(Test).configureEach {
@@ -62,13 +64,13 @@ shadowJar {
 }
 
 
-def targetJavaVersion = 21
+def targetJavaVersion = 25
 java {
     def javaVersion = JavaVersion.toVersion(targetJavaVersion)
     sourceCompatibility = javaVersion
     targetCompatibility = javaVersion
-    // Configure Gradle Java toolchain to request Java 21 for compilation/execution
-    // This lets Gradle download/use a JDK 21 toolchain if available on the system or toolchain providers.
+    // Configure Gradle Java toolchain to request Java 25 for compilation/execution
+    // This lets Gradle download/use a JDK 25 toolchain if available on the system or toolchain providers.
     toolchain {
         languageVersion = JavaLanguageVersion.of(targetJavaVersion)
     }
