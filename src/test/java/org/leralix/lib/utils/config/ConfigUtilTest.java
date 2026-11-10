@@ -61,7 +61,7 @@ class ConfigUtilTest {
      * Test of the {@link ConfigUtil#mergeAndPreserveLines(List, List)} method.
      * <p>
      * 2 different text files should return the current text with the missing lines from the reference text.
-     * Added lines should be overwritten because there is no blacklisted word.
+     * Administrator values and keys absent from the template must survive without a blacklist.
      */
     @Test
     void modifyingValueTest() {
@@ -74,7 +74,9 @@ class ConfigUtilTest {
 
         assertTrue(fileToWrite.isPresent());
         assertNotEquals(referenceText.get(referenceText.size() -1), fileToWrite.get().get(fileToWrite.get().size() - 1));
-        assertEquals(referenceText.size(), fileToWrite.get().size());
+        assertTrue(fileToWrite.get().containsAll(currentText));
+        assertTrue(fileToWrite.get().contains("      UNLOCK_TOWN_SPAWN : +1"));
+        assertEquals(currentText.size() + 1, fileToWrite.get().size());
     }
 
     /**

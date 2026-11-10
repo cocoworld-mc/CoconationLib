@@ -3,11 +3,13 @@ package org.leralix.lib.utils.config;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.Plugin;
-import org.leralix.lib.SphereLib;
 
-import java.io.*;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
+import java.nio.file.Path;
 import java.util.*;
 
 /**
@@ -81,32 +83,44 @@ public class ConfigUtil {
      * any previous backup). Useful for auto-completion of split config files.
      *
      * @param fileName         The name of the resource file (may be a nested path, e.g. {@code modules/towns/towns.yml}).
-     * @param sectionBlacklist Top-level sections whose on-disk content is preserved verbatim.
+     * @param sectionBlacklist Exact section paths whose existing on-disk subtree is preserved verbatim.
      * @param backup           Whether to write a {@code .bak} before rewriting.
      */
     public static void saveAndUpdateResource(Plugin plugin, final String fileName, Collection<String> sectionBlacklist, boolean backup) {
-        File currentFile = new File(plugin.getDataFolder(), fileName);
-        if (!currentFile.exists()) {
-            plugin.saveResource(fileName, false);
-            return;
+        Path root = plugin.getDataFolder().toPath().toAbsolutePath().normalize();
+        Path target = root.resolve(fileName).normalize();
+        if (!target.startsWith(root) || target.equals(root)) {
+            throw new IllegalArgumentException("Resource path escapes plugin data folder: " + fileName);
         }
-
-        InputStream baseFile = plugin.getResource(fileName);
-
-        List<String> baseFileLines = loadFileAsList(baseFile);
-        List<String> currentFileLines = loadFileAsList(currentFile);
-
-        Optional<List<String>> test = mergeAndPreserveLines(baseFileLines, currentFileLines, sectionBlacklist);
-
-        test.ifPresent(list -> {
-            if (backup) {
-                backupFile(currentFile);
+        for (Path parent = target; parent != null && parent.startsWith(root); parent = parent.getParent()) {
+            if (Files.isSymbolicLink(parent)) {
+                throw new IllegalArgumentException("Symbolic resource path refused: " + fileName);
             }
-            writeToFile(list, currentFile);
+        }
+        try (InputStream resource = plugin.getResource(fileName)) {
+            if (resource == null) {
+                throw new IllegalStateException("Missing embedded configuration resource: " + fileName);
+            }
+            String reference = SafeYamlFile.decode(resource.readAllBytes(), fileName + " resource");
+            SafeYamlFile.validate(reference, fileName + " resource");
+            byte[] original = SafeYamlFile.readExisting(target);
+            String candidate = reference;
+            if (original != null) {
+                String actual = SafeYamlFile.decode(original, target.toString());
+                SafeYamlFile.validate(actual, target.toString());
+                Optional<List<String>> merged = mergeAndPreserveLines(reference.lines().toList(), actual.lines().toList(), sectionBlacklist);
+                if (merged.isEmpty()) {
+                    return;
+                }
+                String separator = actual.contains("\r\n") ? "\r\n" : "\n";
+                candidate = String.join(separator, merged.get()) + separator;
+            }
+            SafeYamlFile.SYSTEM.write(target, candidate, backup, original);
             plugin.getLogger().info(() -> "The file " + fileName + " has been updated with missing lines.");
-        });
+        } catch (IOException failure) {
+            throw SafeYamlFile.problem("update resource " + target, failure);
+        }
     }
-
     /**
      * Extract (first run) and line-merge update (subsequent runs) a whole tree of resource files in
      * a single pass. Each entry maps a data-folder-relative path to its section blacklist. A
@@ -191,219 +205,80 @@ public class ConfigUtil {
         return collisions;
     }
 
-    /** Copy {@code file} to {@code file + ".bak"}, overwriting any previous backup. No-op if absent. */
-    static void backupFile(File file) {
-        if (file == null || !file.exists()) {
-            return;
-        }
-        File backup = new File(file.getParentFile(), file.getName() + ".bak");
-        try {
-            Files.copy(file.toPath(), backup.toPath(), StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException e) {
-            SphereLib.getPlugin().getLogger().warning("[CocoNation Lib] ⚠ Erreur backup: " + file);
-        }
+    /** Read UTF-8 YAML strictly before any migration or update is prepared. */
+    public static String readYamlSafely(File file) {
+        return SafeYamlFile.read(file.toPath().toAbsolutePath().normalize());
     }
 
     /**
-     * Load a file as a list of lines.
-     *
-     * @param file The input file.
-     * @return A list of lines, or null if an error occurs.
+     * Write validated UTF-8 YAML through a forced sibling candidate and an atomic replacement.
+     * When requested, an exact .bak of the previous target is committed before replacement.
+     * Failures (including unsupported atomic moves) are propagated as contextual unchecked errors.
+     * No-op content leaves both target and backup untouched. Scheduling is the caller's responsibility.
      */
+    public static void writeYamlSafely(File file, String yaml, boolean backup) {
+        SafeYamlFile.SYSTEM.write(file, yaml, backup);
+    }
+
+    /** Compare the original read by a migration as well as the file just before replacement. */
+    public static void writeYamlSafely(File file, String yaml, boolean backup, String expectedOriginal) {
+        SafeYamlFile.SYSTEM.write(file.toPath().toAbsolutePath().normalize(), yaml, backup,
+                expectedOriginal == null ? null : expectedOriginal.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** Serialize Bukkit's YAML (including comments enabled by its caller) using the same writer. */
+    public static void saveYamlSafely(File file, FileConfiguration yaml, boolean backup) {
+        writeYamlSafely(file, yaml.saveToString(), backup);
+    }
+
+    /** Atomic backup; absent source is a no-op, all other failures propagate. */
+    static void backupFile(File file) {
+        if (file != null) {
+            SafeYamlFile.SYSTEM.backup(file);
+        }
+    }
+
     static List<String> loadFileAsList(InputStream file) {
-        if (file == null) return Collections.emptyList();
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(file))) {
-            List<String> lines = new ArrayList<>();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                lines.add(line);
-            }
-            return lines;
-        } catch (IOException e) {
-            SphereLib.getPlugin().getLogger().warning("[CocoNation Lib] ⚠ Erreur lecture fichier: " + file);
-            return Collections.emptyList();
+        if (file == null) {
+            throw new IllegalArgumentException("Missing configuration input stream");
+        }
+        try (file) {
+            return SafeYamlFile.decode(file.readAllBytes(), "configuration stream").lines().toList();
+        } catch (IOException failure) {
+            throw SafeYamlFile.problem("read configuration stream", failure);
         }
     }
 
     static List<String> loadFileAsList(File file) {
-        if (file == null) return Collections.emptyList();
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
-            List<String> lines = new ArrayList<>();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                lines.add(line);
-            }
-            return lines;
-        } catch (IOException e) {
-            SphereLib.getPlugin().getLogger().warning("[CocoNation Lib] ⚠ Erreur lecture fichier: " + file);
-            return Collections.emptyList();
+        return SafeYamlFile.read(file.toPath()).lines().toList();
+    }
+
+    static Optional<List<String>> mergeAndPreserveLines(List<String> reference, List<String> current) {
+        return mergeAndPreserveLines(reference, current, Collections.emptyList());
+    }
+
+    static Optional<List<String>> mergeAndPreserveLines(List<String> reference, List<String> current,
+                                                        Collection<String> sectionBlacklist) {
+        return YamlLineMerger.merge(reference, current, sectionBlacklist);
+    }
+
+    static int getNbIndentation(String line) {
+        int indentation = 0;
+        while (indentation < line.length() && line.charAt(indentation) == ' ') {
+            indentation++;
         }
+        return indentation;
     }
 
-    /**
-     * Merge the base file lines into the current file lines, preserving order and comments.
-     *
-     * @param pluginFileLines The lines from the base file.
-     * @param actualFileLine  The lines from the current file.
-     * @return A list of lines to write to the current file, or {@link Optional#empty()} if no update is needed.
-     */
-    static Optional<List<String>> mergeAndPreserveLines(List<String> pluginFileLines, List<String> actualFileLine) {
-        return mergeAndPreserveLines(pluginFileLines, actualFileLine, Collections.emptyList());
-    }
-
-    /**
-     * Merge the base file lines into the current file lines, preserving order and comments.
-     *
-     * @param pluginFileLines  The lines from the base file.
-     * @param actualFileLine   The lines from the current file.
-     * @param sectionBlacklist A list of sections to ignore.
-     * @return A list of lines to write to the current file, or {@link Optional#empty()} if no update is needed.
-     */
-    static Optional<List<String>> mergeAndPreserveLines(List<String> pluginFileLines, List<String> actualFileLine, Collection<String> sectionBlacklist) {
-        List<String> mergedLines = new ArrayList<>();
-
-
-        boolean updated = false;
-        int indexActual = 0;
-        int bannedSectionIndentation = 0;
-        boolean inBannedSection = false;
-
-        PluginSideBlacklist pluginSideBlacklist = new PluginSideBlacklist(sectionBlacklist);
-
-
-        for (String pluginFileLine : pluginFileLines) {
-
-
-            //Banned section handling. Keep adding actual lines until the end of the banned section is reached.
-            if (inBannedSection) {
-                while (actualFileLine.size() > indexActual && inBannedSection) {
-                    String actualLine = actualFileLine.get(indexActual);
-
-                    if (getNbIndentation(actualLine) <= bannedSectionIndentation && !actualLine.isBlank()) {
-                        inBannedSection = false;
-                        continue;
-                    }
-                    mergedLines.add(actualLine);
-                    indexActual++;
-                }
-            }
-
-            if (pluginSideBlacklist.isInBackListPart(pluginFileLine)) {
-                continue;
-            }
-
-            //If the index is out of bonds, accept all incomming config lines
-            if (indexActual >= actualFileLine.size()) {
-                mergedLines.add(pluginFileLine);
-                updated = true;
-                continue;
-            }
-
-            String currentLine = actualFileLine.get(indexActual);
-
-            String pluginKey = extractKey(pluginFileLine);
-            String currentKey = extractKey(currentLine);
-
-            //If the current line is empty, skip it
-            if (currentLine.isBlank() && pluginFileLine.isBlank()) {
-                indexActual++;
-                mergedLines.add(pluginFileLine);
-                continue;
-            }
-
-            //Check if the current line is the start of a blacklisted section
-            if (containsKey(sectionBlacklist, pluginKey)) {
-                inBannedSection = true;
-                bannedSectionIndentation = getNbIndentation(pluginFileLine);
-                indexActual++;
-                mergedLines.add(pluginFileLine);
-                if (!currentKey.equals(pluginKey)) {
-                    updated = true;
-                }
-                continue;
-            }
-
-
-            int existingIndex = findLineIndexWithKey(actualFileLine, indexActual - 1, pluginKey);
-            if (existingIndex != -1) {
-                if (existingIndex != indexActual) {
-                    updated = true;
-                }
-                mergedLines.add(actualFileLine.get(existingIndex));
-                indexActual = existingIndex + 1;
-                continue;
-            }
-
-            if (pluginKey.equals(currentKey)) {
-                mergedLines.add(currentLine);
-                indexActual++;
-            } else {
-                mergedLines.add(pluginFileLine);
-                updated = true;
-            }
-        }
-
-        return updated ? Optional.of(mergedLines) : Optional.empty();
-    }
-
-    private static int findLineIndexWithKey(List<String> lines, int startIndex, String key) {
-        //Due to the use of blank lines, startIndex can be -1.In this case.
-        if(startIndex < 0)
-            startIndex = 0;
-
-        for (int i = startIndex; i < lines.size(); i++) {
-            if (extractKey(lines.get(i)).equals(key)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    static int getNbIndentation(String pluginFileLine) {
-        int i = 0;
-        while (i < pluginFileLine.length() && pluginFileLine.charAt(i) == ' ') {
-            i++;
-        }
-        return i;
-    }
-
-    /**
-     * Extracts a key from a configuration line.
-     *
-     * @param line The line to process.
-     * @return The key if found, or null otherwise.
-     */
     static String extractKey(String line) {
-        if (line == null)
-            return "";
-        line = line.trim();
-        if (line.isEmpty()) {
-            return "";
-        }
-        if (line.startsWith("#")) {
-            return line;
-        }
-        if (line.contains(":")) {
-            return line.split(":")[0].trim();
-        }
-        return line;
+        if (line == null) return "";
+        String trimmed = line.trim();
+        if (trimmed.isEmpty() || trimmed.startsWith("#")) return trimmed;
+        int separator = trimmed.indexOf(':');
+        return separator < 0 ? trimmed : trimmed.substring(0, separator).trim();
     }
 
-    /**
-     * Write a list of lines to a file.
-     *
-     * @param lines       The list of lines to write.
-     * @param fileToWrite The file to write to.
-     */
-    static void writeToFile(List<String> lines, File fileToWrite) {
-
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(fileToWrite, false))) {
-            for (String line : lines) {
-                writer.write(line);
-                writer.newLine();
-            }
-        } catch (Exception e) {
-            SphereLib.getPlugin().getLogger().warning("[CocoNation Lib] ⚠ Erreur écriture fichier: " + fileToWrite);
-        }
+    static void writeToFile(List<String> lines, File file) {
+        writeYamlSafely(file, String.join("\n", lines) + "\n", false);
     }
 }
